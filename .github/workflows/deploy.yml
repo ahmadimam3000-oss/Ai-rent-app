@@ -1,0 +1,86 @@
+name: Deploy Ai Rent to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      pages_ready: ${{ steps.configure_pages.outcome == 'success' && steps.upload_artifact.outcome == 'success' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund --legacy-peer-deps
+
+      - name: Build production static bundle
+        run: npm run build
+
+      - name: Prepare SPA routing (404.html) and .nojekyll
+        run: |
+          cp dist/index.html dist/404.html
+          touch dist/.nojekyll
+
+      - name: Publish build to gh-pages branch and switch Pages source
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd dist
+          git init
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b gh-pages
+          git add -A
+          git commit -m "Deploy Ai Rent to GitHub Pages"
+          git push -f "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" gh-pages
+          gh api -X PUT "repos/${GITHUB_REPOSITORY}/pages" -f "source[branch]=gh-pages" -f "source[path]=/" 2>/dev/null || \
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/pages" -f "source[branch]=gh-pages" -f "source[path]=/" 2>/dev/null || true
+
+      - name: Configure GitHub Pages (Actions mode)
+        id: configure_pages
+        uses: actions/configure-pages@v5
+        continue-on-error: true
+        with:
+          enablement: true
+
+      - name: Upload artifact for GitHub Pages
+        if: steps.configure_pages.outcome == 'success'
+        id: upload_artifact
+        uses: actions/upload-pages-artifact@v3
+        continue-on-error: true
+        with:
+          path: './dist'
+
+  deploy:
+    needs: build
+    if: needs.build.outputs.pages_ready == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
